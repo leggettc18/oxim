@@ -1,8 +1,9 @@
 use crossterm::event::*;
 use crossterm::terminal::ClearType;
 use crossterm::{cursor, event, execute, queue, terminal};
-use std::io::{self, stdout, Write};
+use std::path::Path;
 use std::time::Duration;
+use std::{cmp, env, fs, io::{self, stdout, Write}};
 
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 
@@ -59,6 +60,7 @@ struct CursorController {
     cursor_y: usize,
     screen_columns: usize,
     screen_rows: usize,
+    row_offset: usize,
 }
 
 impl CursorController {
@@ -68,10 +70,11 @@ impl CursorController {
             cursor_y: 0,
             screen_columns: win_size.0,
             screen_rows: win_size.1,
+            row_offset: 0,
         }
     }
 
-    fn move_cursor(&mut self, direction: KeyCode) {
+    fn move_cursor(&mut self, direction: KeyCode, number_of_rows: usize) {
         match direction {
             KeyCode::Char('k') | KeyCode::Up => {
                 if self.cursor_y != 0{
@@ -84,7 +87,7 @@ impl CursorController {
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.cursor_y != self.screen_rows - 1 {
+                if self.cursor_y < number_of_rows {
                     self.cursor_y += 1;
                 }
             }
@@ -99,7 +102,7 @@ impl CursorController {
                 }
             }
             KeyCode::PageDown => {
-                while self.cursor_y < self.screen_rows - 1 {
+                while self.cursor_y < number_of_rows {
                     self.cursor_y += 1;
                 }
             }
@@ -112,12 +115,52 @@ impl CursorController {
             _ => unimplemented!(),
         }
     }
+
+    fn scroll(&mut self) {
+        self.row_offset = cmp::min(self.row_offset, self.cursor_y);
+        if self.cursor_y >= self.row_offset + self.screen_rows {
+            self.row_offset = self.cursor_y - self.screen_rows + 1;
+        }
+    }
+}
+
+struct EditorRows {
+    row_contents: Vec<Box<str>>,
+}
+
+impl EditorRows {
+    fn new() -> Self {
+        let mut arg = env::args();
+
+        match arg.nth(1) {
+            None => Self {
+                row_contents: Vec::new(),
+            },
+            Some(file) => Self::from_file(file.as_ref()),
+        }
+    }
+
+    fn from_file(file: &Path) -> Self {
+        let file_contents = fs::read_to_string(file).expect("Unable to read file");
+        Self {
+            row_contents: file_contents.lines().map(|it| it.into()).collect(),
+        }
+    }
+
+    fn number_of_rows(&self) -> usize {
+        self.row_contents.len()
+    }
+
+    fn get_row(&self, at: usize) -> &str {
+        &self.row_contents[at]
+    }
 }
 
 struct Output {
     win_size: (usize, usize),
     editor_contents: EditorContents,
     cursor_controller: CursorController,
+    editor_rows: EditorRows,
 }
 
 impl Output {
@@ -129,6 +172,7 @@ impl Output {
             win_size,
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
+            editor_rows: EditorRows::new(),
         }
     }
 
@@ -141,20 +185,26 @@ impl Output {
         let screen_columns = self.win_size.0;
         let screen_rows = self.win_size.1;
         for i in 0..screen_rows {
-            if i == screen_rows / 3 {
-                let mut welcome = format!("Oxim Editor --- Version {}", VERSION.unwrap_or("unknown"));
-                if welcome.len() > screen_columns {
-                    welcome.truncate(screen_columns)
-                }
-                let mut padding = (screen_columns - welcome.len()) / 2;
-                if padding != 0 {
+            let file_row = i + self.cursor_controller.row_offset;
+            if file_row >= self.editor_rows.number_of_rows() {
+                if self.editor_rows.number_of_rows() == 0 && i == screen_rows / 3 {
+                    let mut welcome = format!("Oxim Editor --- Version {}", VERSION.unwrap_or("unknown"));
+                    if welcome.len() > screen_columns {
+                        welcome.truncate(screen_columns)
+                    }
+                    let mut padding = (screen_columns - welcome.len()) / 2;
+                    if padding != 0 {
+                        self.editor_contents.push('~');
+                        padding -= 1
+                    }
+                    (0..padding).for_each(|_| self.editor_contents.push(' '));
+                    self.editor_contents.push_str(&welcome);
+                } else {
                     self.editor_contents.push('~');
-                    padding -= 1
                 }
-                (0..padding).for_each(|_| self.editor_contents.push(' '));
-                self.editor_contents.push_str(&welcome);
             } else {
-                self.editor_contents.push('~');
+                let len = cmp::min(self.editor_rows.get_row(file_row).len(), screen_columns);
+                self.editor_contents.push_str(&self.editor_rows.get_row(file_row)[..len])
             }
             queue!(
                 self.editor_contents,
@@ -167,6 +217,7 @@ impl Output {
     }
 
     fn refresh_screen(&mut self) -> crossterm::Result<()> {
+        self.cursor_controller.scroll();
         queue!(
             self.editor_contents,
             cursor::Hide,
@@ -184,7 +235,7 @@ impl Output {
     }
 
     fn move_cursor(&mut self, direction: KeyCode) {
-        self.cursor_controller.move_cursor(direction);
+        self.cursor_controller.move_cursor(direction, self.editor_rows.number_of_rows());
     }
 }
 
