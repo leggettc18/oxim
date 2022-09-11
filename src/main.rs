@@ -93,6 +93,22 @@ impl CursorController {
                     self.cursor_x += 1;
                 }
             }
+            KeyCode::PageUp => {
+                while self.cursor_y > 0 {
+                    self.cursor_y -= 1;
+                }
+            }
+            KeyCode::PageDown => {
+                while self.cursor_y < self.screen_rows - 1 {
+                    self.cursor_y += 1;
+                }
+            }
+            KeyCode::Home => {
+                self.cursor_x = 0;
+            }
+            KeyCode::End => {
+                self.cursor_x = self.screen_columns - 1;
+            }
             _ => unimplemented!(),
         }
     }
@@ -209,7 +225,15 @@ impl Editor {
                 code: direction @ KeyCode::Char('h' | 'j' | 'k' | 'l' ),
                 modifiers: KeyModifiers::NONE,
             } | KeyEvent {
-                code: direction @ (KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right),
+                code: direction @ 
+                ( KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::PageUp
+                | KeyCode::PageDown),
                 modifiers: KeyModifiers::NONE,
             }  => self.output.move_cursor(direction),
             _ => {}
