@@ -209,6 +209,11 @@ impl Row {
         self.row_content.insert(at, ch);
         EditorRows::render_row(self)
     }
+
+    fn delete_char(&mut self, at: usize) {
+        self.row_content.remove(at);
+        EditorRows::render_row(self)
+    }
 }
 
 struct EditorRows {
@@ -446,6 +451,18 @@ impl Output {
         self.cursor_controller.cursor_x += 1;
         self.dirty += 1;
     }
+
+    fn delete_char(&mut self) {
+        if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
+            return;
+        }
+        let row = self.editor_rows.get_editor_row_mut(self.cursor_controller.cursor_y);
+        if self.cursor_controller.cursor_x > 0 {
+            row.delete_char(self.cursor_controller.cursor_x - 1);
+            self.cursor_controller.cursor_x -= 1;
+            self.dirty += 1;
+        }
+    }
 }
 
 struct Reader;
@@ -498,8 +515,8 @@ impl Editor {
     }
 
     fn process_keypress(&mut self) -> crossterm::Result<bool> {
-        let keycode = self.reader.read_key()?;
-        match keycode {
+        let key_event = self.reader.read_key()?;
+        match key_event {
             KeyEvent {
                 code: KeyCode::Char('q'),
                 modifiers: event::KeyModifiers::CONTROL,
@@ -557,12 +574,12 @@ impl Editor {
                 modifiers: KeyModifiers::NONE,
             } => self.change_mode(EditorMode::NORMAL)?,
             KeyEvent {
-                code: code @ (KeyCode::Char(..) | KeyCode::Tab),
+                code: code @ (KeyCode::Char(..) | KeyCode::Tab | KeyCode::Backspace | KeyCode::Delete),
                 modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
             } => {
                 match self.output.editor_mode {
                     EditorMode::NORMAL => {
-                        match keycode {
+                        match key_event {
                             KeyEvent {
                                 code: direction @ KeyCode::Char('h' | 'j' | 'k' | 'l' ),
                                 modifiers: KeyModifiers::NONE,
@@ -575,11 +592,24 @@ impl Editor {
                         }
                     },
                     EditorMode::INSERT => {
-                        self.output.insert_char(match code {
-                            KeyCode::Tab => '\t',
-                            KeyCode::Char(ch) => ch,
-                            _ => unreachable!(),
-                        })
+                        match key_event {
+                            KeyEvent {
+                                code: key @ (KeyCode::Backspace | KeyCode::Delete),
+                                modifiers: KeyModifiers::NONE,
+                            } => {
+                                if matches!(key, KeyCode::Delete) {
+                                    self.output.move_cursor(KeyCode::Right)
+                                }
+                                self.output.delete_char()
+                            },
+                            _ =>{
+                                self.output.insert_char(match code {
+                                    KeyCode::Tab => '\t',
+                                    KeyCode::Char(ch) => ch,
+                                    _ => unreachable!(),
+                                })
+                            },
+                        }
                     },
                 }
             }
