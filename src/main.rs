@@ -3,6 +3,7 @@ use crossterm::terminal::ClearType;
 use crossterm::{cursor, event, execute, queue, style, terminal};
 use std::cmp::Ordering;
 use std::fmt;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::{cmp, env, fs, io::{self, stdout, Write}};
@@ -282,6 +283,24 @@ impl EditorRows {
     fn get_editor_row_mut(&mut self, at: usize) -> &mut Row {
         &mut self.row_contents[at]
     }
+
+    fn save(&self) -> io::Result<usize> {
+        match &self.filename {
+            None => Err(io::Error::new(ErrorKind::Other, "no file name specified")),
+            Some(name) => {
+                let mut file = fs::OpenOptions::new().write(true).create(true).open(name)?;
+                let contents: String = self
+                    .row_contents
+                    .iter()
+                    .map(|it| it.row_content.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n");
+                file.set_len(contents.len() as u64)?;
+                file.write_all(contents.as_bytes())?;
+                Ok(contents.as_bytes().len())
+            }
+        }
+    }
 }
 
 struct Output {
@@ -303,7 +322,7 @@ impl Output {
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
-            status_message: StatusMessage::new("HELP: Ctrl-Q = Quit".into()),
+            status_message: StatusMessage::new("HELP: Ctrl-S = Save | Ctrl-Q = Quit".into()),
             editor_mode: EditorMode::NORMAL,
         }
     }
@@ -484,6 +503,12 @@ impl Editor {
                 modifiers: event::KeyModifiers::CONTROL,
             } => return Ok(false),
             KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers: KeyModifiers::CONTROL,
+            } => self.output.editor_rows.save().map(|len| {
+                self.output.status_message.set_message(format!("{} bytes written to disk", len));
+            })?,
+            KeyEvent {
                 code: direction @ 
                 ( KeyCode::Up
                 | KeyCode::Down
@@ -543,7 +568,6 @@ impl Editor {
                             _ => unreachable!(),
                         })
                     },
-                    _ => {},
                 }
             }
             _ => {}
