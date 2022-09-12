@@ -10,6 +10,7 @@ use std::{cmp, env, fs, io::{self, stdout, Write}};
 
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 const TAB_STOP: usize = 8;
+const QUIT_TIMES: u8 = 3;
 
 struct CleanUp;
 
@@ -479,6 +480,7 @@ impl fmt::Display for EditorMode {
 struct Editor {
     reader: Reader,
     output: Output,
+    quit_times: u8,
 }
 
 impl Editor {
@@ -486,6 +488,7 @@ impl Editor {
         Self {
             reader: Reader,
             output: Output::new(),
+            quit_times: QUIT_TIMES,
         }
     }
 
@@ -500,7 +503,17 @@ impl Editor {
             KeyEvent {
                 code: KeyCode::Char('q'),
                 modifiers: event::KeyModifiers::CONTROL,
-            } => return Ok(false),
+            } => {
+                if self.output.dirty > 0 && self.quit_times > 0 {
+                    self.output.status_message.set_message(format!(
+                        "WARNING!!! File has unsaved changes. Press Ctrl-Q {} more times to quit.",
+                        self.quit_times
+                    ));
+                    self.quit_times -= 1;
+                    return Ok(true);
+                }
+                return Ok(false);
+            },
             KeyEvent {
                 code: KeyCode::Char('s'),
                 modifiers: KeyModifiers::CONTROL,
@@ -572,6 +585,8 @@ impl Editor {
             }
             _ => {}
         }
+        self.quit_times = QUIT_TIMES;
+        self.output.status_message.set_message("".into());
         Ok(true)
     }
 
