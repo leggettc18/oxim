@@ -310,6 +310,7 @@ struct Output {
     editor_rows: EditorRows,
     status_message: StatusMessage,
     editor_mode: EditorMode,
+    dirty: u64,
 }
 
 impl Output {
@@ -324,6 +325,7 @@ impl Output {
             editor_rows: EditorRows::new(),
             status_message: StatusMessage::new("HELP: Ctrl-S = Save | Ctrl-Q = Quit".into()),
             editor_mode: EditorMode::NORMAL,
+            dirty: 0,
         }
     }
 
@@ -370,17 +372,12 @@ impl Output {
 
     fn draw_status_bar(&mut self) {
         self.editor_contents.push_str(&style::Attribute::Reverse.to_string());
-        let mode = format!(
-            "--{}--",
-            self.editor_mode.to_string()
-        );
-        let mode_len = cmp::min(mode.len(), self.win_size.0);
-        self.editor_contents.push_str(&mode[..mode_len]);
-        self.editor_contents.push(' ');
         let info = format!(
-            "{} -- {} lines",
+            "--{}-- {} {} -- {} lines",
+            self.editor_mode.to_string(),
             self.editor_rows.filename.as_ref().and_then(|path| path.file_name())
                 .and_then(|name| name.to_str()).unwrap_or("[No Name]"),
+            if self.dirty > 0 { "(modified)" } else { "" },
             self.editor_rows.number_of_rows(),
         );
         let info_len = cmp::min(info.len(), self.win_size.0);
@@ -390,7 +387,7 @@ impl Output {
             self.editor_rows.number_of_rows()
         );
         self.editor_contents.push_str(&info[..info_len]);
-        for i in mode_len + 1 + info_len..self.win_size.0 {
+        for i in info_len..self.win_size.0 {
             if self.win_size.0 - i == line_info.len() {
                 self.editor_contents.push_str(&line_info);
                 break;
@@ -440,11 +437,13 @@ impl Output {
 
     fn insert_char (&mut self, ch: char) {
         if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
-            self.editor_rows.insert_row()
+            self.editor_rows.insert_row();
+            self.dirty += 1;
         }
         self.editor_rows.get_editor_row_mut(self.cursor_controller.cursor_y)
             .insert_char(self.cursor_controller.cursor_x, ch);
         self.cursor_controller.cursor_x += 1;
+        self.dirty += 1;
     }
 }
 
@@ -507,6 +506,7 @@ impl Editor {
                 modifiers: KeyModifiers::CONTROL,
             } => self.output.editor_rows.save().map(|len| {
                 self.output.status_message.set_message(format!("{} bytes written to disk", len));
+                self.output.dirty = 0
             })?,
             KeyEvent {
                 code: direction @ 
