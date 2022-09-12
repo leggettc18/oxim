@@ -96,16 +96,6 @@ impl CursorController {
                     self.cursor_x += 1;
                 }
             }
-            KeyCode::PageUp => {
-                while self.cursor_y > 0 {
-                    self.cursor_y -= 1;
-                }
-            }
-            KeyCode::PageDown => {
-                while self.cursor_y < number_of_rows {
-                    self.cursor_y += 1;
-                }
-            }
             KeyCode::Home => {
                 self.cursor_x = 0;
             }
@@ -225,7 +215,7 @@ impl Output {
         )?;
         self.draw_rows();
         let cursor_x = self.cursor_controller.cursor_x;
-        let cursor_y = self.cursor_controller.cursor_y;
+        let cursor_y = self.cursor_controller.cursor_y - self.cursor_controller.row_offset;
         queue!(
             self.editor_contents,
             cursor::MoveTo(cursor_x as u16, cursor_y as u16), 
@@ -282,11 +272,19 @@ impl Editor {
                 | KeyCode::Left
                 | KeyCode::Right
                 | KeyCode::Home
-                | KeyCode::End
-                | KeyCode::PageUp
-                | KeyCode::PageDown),
+                | KeyCode::End),
                 modifiers: KeyModifiers::NONE,
             }  => self.output.move_cursor(direction),
+            KeyEvent {
+                code: val @ (KeyCode::PageUp | KeyCode::PageDown),
+                modifiers: KeyModifiers::NONE,
+            } => (0..self.output.win_size.1).for_each(|_| {
+                self.output.move_cursor(if matches!(val, KeyCode::PageUp) {
+                    KeyCode::Up
+                } else {
+                    KeyCode::Down
+                });
+            }),
             _ => {}
         }
         Ok(true)
