@@ -2,6 +2,7 @@ use crossterm::event::*;
 use crossterm::terminal::ClearType;
 use crossterm::{cursor, event, execute, queue, style, terminal};
 use std::cmp::Ordering;
+use std::fmt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::{cmp, env, fs, io::{self, stdout, Write}};
@@ -188,17 +189,23 @@ impl CursorController {
     }
 }
 
+#[derive(Default)]
 struct Row {
-    row_content: Box<str>,
+    row_content: String,
     render: String,
 }
 
 impl Row {
-    fn new (row_content: Box<str>, render: String) -> Self {
+    fn new (row_content: String, render: String) -> Self {
         Self {
             row_content,
             render
         }
+    }
+
+    fn insert_char(&mut self, at: usize, ch: char) {
+        self.row_content.insert(at, ch);
+        EditorRows::render_row(self)
     }
 }
 
@@ -267,6 +274,14 @@ impl EditorRows {
             }
         });
     }
+
+    fn insert_row(&mut self) {
+        self.row_contents.push(Row::default());
+    }
+
+    fn get_editor_row_mut(&mut self, at: usize) -> &mut Row {
+        &mut self.row_contents[at]
+    }
 }
 
 struct Output {
@@ -275,6 +290,7 @@ struct Output {
     cursor_controller: CursorController,
     editor_rows: EditorRows,
     status_message: StatusMessage,
+    editor_mode: EditorMode,
 }
 
 impl Output {
@@ -288,6 +304,7 @@ impl Output {
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
             status_message: StatusMessage::new("HELP: Ctrl-Q = Quit".into()),
+            editor_mode: EditorMode::NORMAL,
         }
     }
 
@@ -334,6 +351,13 @@ impl Output {
 
     fn draw_status_bar(&mut self) {
         self.editor_contents.push_str(&style::Attribute::Reverse.to_string());
+        let mode = format!(
+            "--{}--",
+            self.editor_mode.to_string()
+        );
+        let mode_len = cmp::min(mode.len(), self.win_size.0);
+        self.editor_contents.push_str(&mode[..mode_len]);
+        self.editor_contents.push(' ');
         let info = format!(
             "{} -- {} lines",
             self.editor_rows.filename.as_ref().and_then(|path| path.file_name())
@@ -347,7 +371,7 @@ impl Output {
             self.editor_rows.number_of_rows()
         );
         self.editor_contents.push_str(&info[..info_len]);
-        for i in info_len..self.win_size.0 {
+        for i in mode_len + 1 + info_len..self.win_size.0 {
             if self.win_size.0 - i == line_info.len() {
                 self.editor_contents.push_str(&line_info);
                 break;
@@ -394,6 +418,15 @@ impl Output {
     fn move_cursor(&mut self, direction: KeyCode) {
         self.cursor_controller.move_cursor(direction, &self.editor_rows);
     }
+
+    fn insert_char (&mut self, ch: char) {
+        if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
+            self.editor_rows.insert_row()
+        }
+        self.editor_rows.get_editor_row_mut(self.cursor_controller.cursor_y)
+            .insert_char(self.cursor_controller.cursor_x, ch);
+        self.cursor_controller.cursor_x += 1;
+    }
 }
 
 struct Reader;
@@ -406,6 +439,21 @@ impl Reader {
                     return Ok(event);
                 }
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum EditorMode {
+    NORMAL,
+    INSERT,
+}
+
+impl fmt::Display for EditorMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            EditorMode::NORMAL => write!(f, "NORMAL"),
+            EditorMode::INSERT => write!(f, "INSERT"),
         }
     }
 }
@@ -423,16 +471,19 @@ impl Editor {
         }
     }
 
+    fn change_mode(&mut self, mode: EditorMode) -> crossterm::Result<()> {
+        self.output.editor_mode = mode;
+        self.output.refresh_screen()
+    }
+
     fn process_keypress(&mut self) -> crossterm::Result<bool> {
-        match self.reader.read_key()? {
+        let keycode = self.reader.read_key()?;
+        match keycode {
             KeyEvent {
                 code: KeyCode::Char('q'),
                 modifiers: event::KeyModifiers::CONTROL,
             } => return Ok(false),
             KeyEvent {
-                code: direction @ KeyCode::Char('h' | 'j' | 'k' | 'l' ),
-                modifiers: KeyModifiers::NONE,
-            } | KeyEvent {
                 code: direction @ 
                 ( KeyCode::Up
                 | KeyCode::Down
@@ -463,6 +514,38 @@ impl Editor {
                     });
                 })
             },
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+            } => self.change_mode(EditorMode::NORMAL)?,
+            KeyEvent {
+                code: code @ (KeyCode::Char(..) | KeyCode::Tab),
+                modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+            } => {
+                match self.output.editor_mode {
+                    EditorMode::NORMAL => {
+                        match keycode {
+                            KeyEvent {
+                                code: direction @ KeyCode::Char('h' | 'j' | 'k' | 'l' ),
+                                modifiers: KeyModifiers::NONE,
+                            } => self.output.move_cursor(direction),
+                            KeyEvent {
+                                code: KeyCode::Char('i'),
+                                modifiers: KeyModifiers::NONE,
+                            } => self.change_mode(EditorMode::INSERT)?,
+                            _ => {}
+                        }
+                    },
+                    EditorMode::INSERT => {
+                        self.output.insert_char(match code {
+                            KeyCode::Tab => '\t',
+                            KeyCode::Char(ch) => ch,
+                            _ => unreachable!(),
+                        })
+                    },
+                    _ => {},
+                }
+            }
             _ => {}
         }
         Ok(true)
