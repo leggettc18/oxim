@@ -282,8 +282,10 @@ impl EditorRows {
         });
     }
 
-    fn insert_row(&mut self) {
-        self.row_contents.push(Row::default());
+    fn insert_row(&mut self, at: usize, contents: String) {
+        let mut new_row = Row::new(contents, String::new());
+        EditorRows::render_row(&mut new_row);
+        self.row_contents.insert(at, new_row);
     }
 
     fn get_editor_row_mut(&mut self, at: usize) -> &mut Row {
@@ -443,12 +445,27 @@ impl Output {
 
     fn insert_char (&mut self, ch: char) {
         if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
-            self.editor_rows.insert_row();
+            self.editor_rows.insert_row(self.editor_rows.number_of_rows(), String::new());
             self.dirty += 1;
         }
         self.editor_rows.get_editor_row_mut(self.cursor_controller.cursor_y)
             .insert_char(self.cursor_controller.cursor_x, ch);
         self.cursor_controller.cursor_x += 1;
+        self.dirty += 1;
+    }
+
+    fn insert_newline(&mut self) {
+        if self.cursor_controller.cursor_x == 0 {
+            self.editor_rows.insert_row(self.cursor_controller.cursor_y, String::new());
+        } else {
+            let current_row = self.editor_rows.get_editor_row_mut(self.cursor_controller.cursor_y);
+            let new_row_content = current_row.row_content[self.cursor_controller.cursor_x..].into();
+            current_row.row_content.truncate(self.cursor_controller.cursor_x);
+            EditorRows::render_row(current_row);
+            self.editor_rows.insert_row(self.cursor_controller.cursor_y + 1, new_row_content);
+        }
+        self.cursor_controller.cursor_x = 0;
+        self.cursor_controller.cursor_y += 1;
         self.dirty += 1;
     }
 
@@ -574,7 +591,7 @@ impl Editor {
                 modifiers: KeyModifiers::NONE,
             } => self.change_mode(EditorMode::NORMAL)?,
             KeyEvent {
-                code: code @ (KeyCode::Char(..) | KeyCode::Tab | KeyCode::Backspace | KeyCode::Delete),
+                code: code @ (KeyCode::Char(..) | KeyCode::Tab | KeyCode::Backspace | KeyCode::Delete | KeyCode::Enter),
                 modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
             } => {
                 match self.output.editor_mode {
@@ -602,6 +619,10 @@ impl Editor {
                                 }
                                 self.output.delete_char()
                             },
+                            KeyEvent {
+                                code: KeyCode::Enter,
+                                modifiers: KeyModifiers::NONE,
+                            } => self.output.insert_newline(),
                             _ =>{
                                 self.output.insert_char(match code {
                                     KeyCode::Tab => '\t',
